@@ -1,0 +1,4 @@
+python-telegram-bot>=20,<23
+pystray>=0.19
+Pillow>=10
+pywebview>=5

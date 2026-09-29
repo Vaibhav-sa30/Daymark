@@ -1,0 +1,21 @@
+# Local credentials and account-specific settings
+ai_config.json
+calendar_config.json
+telegram_config.json
+planner_config.json
+prompt.md
+
+# Local calendar, actions, caches, and application runtime files
+calendar_cache.json
+daymark_tasks.json
+daymark_events.json
+*.log
+*.lock
+_loading.html
+Daymark.lnk
+
+# Python and editor artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.vscode/

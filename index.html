@@ -1,0 +1,885 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#fbfaf7">
+  <title>Daymark — Personal Execution &amp; Accountability Assistant</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <a class="brand" href="#"><span class="brand-mark">d</span><span>daymark<span class="brand-period">.</span></span></a>
+      <div class="workspace-label">EXECUTION COACH</div>
+      
+      <button class="nav-item active" data-view="today">
+        <span class="nav-icon">◷</span> Today
+        <span class="nav-count" id="todayNavCount">0</span>
+      </button>
+
+      <button class="nav-item" data-view="projects">
+        <span class="nav-icon">◈</span> Projects
+        <span class="nav-count" id="activeProjectsCount">2/3</span>
+      </button>
+
+      <button class="nav-item" data-view="ideas">
+        <span class="nav-icon">◇</span> Idea Parking Lot
+        <span class="nav-count" id="parkingLotNavCount">0</span>
+      </button>
+
+      <button class="nav-item" data-view="calendar">
+        <span class="nav-icon">▦</span> Calendar &amp; Time
+      </button>
+
+      <button class="nav-item" data-view="review">
+        <span class="nav-icon">⟳</span> Reviews &amp; Log
+      </button>
+
+      <button class="nav-item" data-view="context">
+        <span class="nav-icon">📂</span> Workspace Scanner
+      </button>
+
+      <div class="sidebar-bottom">
+        <div class="avatar">Y</div>
+        <div class="profile-copy">
+          <b>Personal Space</b>
+          <span id="activeLimitMini">Max 3 Projects</span>
+        </div>
+        <button class="icon-button" id="settingsBtn" aria-label="Reminder settings" title="Daily check-in settings">⚙</button>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header class="topbar">
+        <div class="breadcrumb">Execution <span>/</span> <b id="breadcrumbView">Today</b></div>
+        <div class="topbar-actions">
+          <span class="calendar-live-pill" id="calLiveBadge" title="Google Calendar Feed Live">🟢 G-Cal Synced</span>
+          <span class="time-budget-pill" id="topTimePill" title="Focus window available today">4.5h focus free</span>
+          <button class="brief-button chat-top-btn" id="openChatBtn" title="Ask Assistant (Ctrl+K)"><span>✦</span> Ask Assistant <kbd>Ctrl+K</kbd></button>
+          <button class="top-date" id="dateButton"></button>
+        </div>
+      </header>
+
+      <!-- ========================================================
+           VIEW: TODAY (Cockpit)
+           ======================================================== -->
+      <section class="page" id="todayView">
+        <div class="greeting-row">
+          <div>
+            <p class="eyebrow" id="greetingEyebrow">MONDAY, SEPTEMBER 26</p>
+            <h1 id="greeting">A clear day starts here.</h1>
+            <p class="subtitle" id="greetingSub">Execution over planning. What is the smallest concrete thing you can do right now?</p>
+          </div>
+          <div class="greeting-actions">
+            <button class="brief-button secondary-btn" id="shutdownLaunchBtn" title="Close out today and decide what happens tomorrow"><span>🌙</span> Shutdown</button>
+            <button class="brief-button secondary-btn" id="testAlarmButton" title="Test the daily morning alarm and briefing pop-up"><span>🔔</span> Test Alarm</button>
+            <button class="brief-button" id="briefButton"><span>✦</span> Daily Briefing <span class="brief-arrow">↗</span></button>
+          </div>
+        </div>
+
+        <!-- Anti-Planning Banner (Contextual) -->
+        <div class="alert-banner hidden" id="antiPlanningBanner">
+          <span class="alert-icon">⚡</span>
+          <div class="alert-copy">
+            <b>Anti-Planning Guardrail:</b> You've added several tasks without executing. Stop planning. Let's start the next 20-minute action.
+          </div>
+          <button class="secondary-btn" id="antiPlanningStartBtn">Start Next Action Now →</button>
+        </div>
+
+        <!-- The Daily Big Three Banner -->
+        <div class="big-three-card">
+          <div class="big-three-header">
+            <div>
+              <span class="context-tag">DAILY BIG THREE · AT MOST 3 OUTCOMES</span>
+              <h2>Today's Must-Win Focus</h2>
+            </div>
+            <button class="text-button" id="editBigThreeBtn">✎ Edit Big Three</button>
+          </div>
+
+          <div class="big-three-grid">
+            <div class="big-three-primary">
+              <span class="badge primary-badge">PRIMARY OUTCOME</span>
+              <p class="big-three-title" id="primaryOutcomeText">Finish Google Calendar OAuth &amp; retrieve today's meetings.</p>
+              <small class="big-three-sub">If only this gets done today, the day was a victory.</small>
+            </div>
+            <div class="big-three-secondaries">
+              <div class="secondary-outcome-item">
+                <span class="badge secondary-badge">SECONDARY 1</span>
+                <p id="secondaryOutcome1">Attend 2 project meetings without context switching.</p>
+              </div>
+              <div class="secondary-outcome-item">
+                <span class="badge secondary-badge">SECONDARY 2</span>
+                <p id="secondaryOutcome2">Review Kaggle competition paper methodology baseline.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Time & Calendar Constraint Reality Check -->
+        <div class="time-reality-bar" id="timeRealityBar">
+          <div class="time-stat">
+            <span class="time-label">CALENDAR MEETINGS</span>
+            <b id="statMeetingHours">2.5 hrs</b>
+          </div>
+          <div class="time-stat">
+            <span class="time-label">AVAILABLE FOCUS WINDOWS</span>
+            <b id="statFocusHours">4.5 hrs</b>
+          </div>
+          <div class="time-stat">
+            <span class="time-label">PLANNED WORK</span>
+            <b id="statPlannedHours">3.0 hrs</b>
+          </div>
+          <div class="time-status-pill safe" id="timeStatusPill">
+            <span>✓ Realistic Schedule</span>
+          </div>
+        </div>
+
+        <!-- Hero Card: The NEXT Concrete Action with START Button -->
+        <div class="next-action-hero" id="nextActionHero">
+          <div class="next-action-badge">
+            <span class="next-pulse">●</span> NEXT IMMEDIATE CONCRETE ACTION
+          </div>
+          <div class="next-hero-body">
+            <div>
+              <h3 id="nextHeroTitle">Open codebase and implement the /login route</h3>
+              <p id="nextHeroSub">Project: Build Reminder Assistant · Estimated 30 mins</p>
+            </div>
+            <button class="start-focus-btn" id="startHeroBtn">
+              <span>⚡ START NOW</span>
+              <small>25m Focus Block</small>
+            </button>
+          </div>
+        </div>
+
+        <!-- Two Columns: Today's Tasks & Calendar Schedule -->
+        <div class="columns">
+          <div class="left-column">
+            <!-- Tasks Panel (Categorized: MUST, SHOULD, OPTIONAL) -->
+            <section class="panel">
+              <div class="panel-heading">
+                <div class="panel-icon task-icon">✓</div>
+                <div>
+                  <h3>Today's Concrete Actions</h3>
+                  <p>Small concrete steps. Limit friction.</p>
+                </div>
+                <div class="panel-actions">
+                  <button class="text-button" id="addTaskQuick">＋ Add Action</button>
+                </div>
+              </div>
+
+              <!-- MUST Tasks -->
+              <div class="task-tier-group">
+                <div class="tier-label must-label">
+                  <span>MUST DO</span>
+                  <small>Genuinely matters today</small>
+                </div>
+                <div class="item-list" id="mustTaskList"></div>
+              </div>
+
+              <!-- SHOULD Tasks -->
+              <div class="task-tier-group">
+                <div class="tier-label should-label">
+                  <span>SHOULD DO</span>
+                  <small>Important but flexible</small>
+                </div>
+                <div class="item-list" id="shouldTaskList"></div>
+              </div>
+
+              <!-- OPTIONAL Tasks -->
+              <div class="task-tier-group">
+                <div class="tier-label optional-label">
+                  <span>OPTIONAL</span>
+                  <small>Only if time and energy permit</small>
+                </div>
+                <div class="item-list" id="optionalTaskList"></div>
+              </div>
+            </section>
+          </div>
+
+          <aside class="right-column">
+            <!-- Calendar Schedule Panel -->
+            <section class="panel meeting-panel">
+              <div class="panel-heading">
+                <div class="panel-icon meeting-icon">◷</div>
+                <div>
+                  <h3>Calendar Constraints</h3>
+                  <p>External commitments bounding your day</p>
+                </div>
+                <button class="more-button" aria-label="Add meeting" id="addMeetingQuick" title="Add meeting constraint">＋</button>
+              </div>
+              <div class="item-list" id="meetingList"></div>
+              <div class="calendar-footer-link">
+                <a href="#" id="gotoCalendarLink">Connect Google Calendar (.ics) →</a>
+              </div>
+            </section>
+
+            <!-- Execution Coach Card -->
+            <section class="context-card coach-card">
+              <div class="context-top">
+                <span class="context-sparkle">✳</span>
+                <span class="context-tag">EXECUTION COACH</span>
+              </div>
+              <h3 id="coachTitle">Consistency beats intensity.</h3>
+              <p id="coachText">Do not optimize for maximum daily intensity. Optimize for finishing your primary task. A mediocre day where you finish is better than an elaborate plan that collapses in 2 days.</p>
+            </section>
+
+            <!-- Quick Parking Lot Capture -->
+            <section class="reminder-card parking-quick-card">
+              <div class="reminder-head">
+                <span class="bell-icon">◇</span>
+                <span class="context-tag">IDEA PARKING LOT</span>
+              </div>
+              <h3>Exciting new idea?</h3>
+              <p>Park it immediately so it doesn't derail your current active projects.</p>
+              <div class="quick-idea-row">
+                <input type="text" id="quickIdeaInput" placeholder="e.g. Build an AI video summarizer">
+                <button class="secondary-btn" id="quickIdeaBtn">Park →</button>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================================================
+           VIEW: PROJECTS (Max 3 Active Projects)
+           ======================================================== -->
+      <section class="page alternate-page hidden" id="projectsView">
+        <div class="page-header-row">
+          <div>
+            <p class="eyebrow">LIMIT ACTIVE COMMITMENTS</p>
+            <h1>Projects &amp; Focus</h1>
+            <p class="subtitle">You cannot accumulate unlimited active projects. Default limit is 3. Finish or pause before activating new ones.</p>
+          </div>
+          <div class="header-stat-box">
+            <span class="stat-badge" id="projectCapacityBadge">2 / 3 ACTIVE</span>
+            <button class="primary-button" id="newProjectBtn">＋ New Project</button>
+          </div>
+        </div>
+
+        <div class="projects-container">
+          <div class="projects-section-header">
+            <h3>ACTIVE PROJECTS (MAX 3)</h3>
+            <span>These are the only projects allowed to receive daily focus.</span>
+          </div>
+          <div class="projects-grid" id="activeProjectsGrid"></div>
+
+          <div class="projects-section-header" style="margin-top:36px">
+            <h3>PAUSED PROJECTS</h3>
+            <span>Intentionally placed on hold. No guilt. Can be resumed by trading off an active one.</span>
+          </div>
+          <div class="projects-grid" id="pausedProjectsGrid"></div>
+
+          <div class="projects-section-header" style="margin-top:36px">
+            <h3>COMPLETED &amp; ARCHIVED</h3>
+            <span>Factual record of finished deliverables.</span>
+          </div>
+          <div class="projects-grid" id="completedProjectsGrid"></div>
+        </div>
+      </section>
+
+      <!-- ========================================================
+           VIEW: IDEA PARKING LOT
+           ======================================================== -->
+      <section class="page alternate-page hidden" id="ideasView">
+        <p class="eyebrow">PROTECT FOCUS · NO DRIFT</p>
+        <h1>Idea Parking Lot</h1>
+        <p class="subtitle">Any exciting new idea should be captured easily. But capturing an idea does NOT automatically make it an active project.</p>
+
+        <div class="parking-capture-card">
+          <h3>Capture a New Idea</h3>
+          <p>Safely store this thought without diluting your 3 active commitments.</p>
+          <div class="form-grid">
+            <div>
+              <label for="ideaTitleInput">WHAT IS THE IDEA?</label>
+              <input id="ideaTitleInput" placeholder="e.g. YouTube shorts auto-clipper pipeline">
+            </div>
+            <div>
+              <label for="ideaProblemInput">WHAT PROBLEM DOES IT SOLVE?</label>
+              <input id="ideaProblemInput" placeholder="e.g. Extracts 5 clips from each long-form lecture">
+            </div>
+          </div>
+          <div style="margin-top:12px; display:flex; justify-content:flex-end">
+            <button class="primary-button" id="saveIdeaBtn">Capture to Parking Lot <span>→</span></button>
+          </div>
+        </div>
+
+        <div class="parking-list-container">
+          <div class="projects-section-header">
+            <h3>PARKED IDEAS (<span id="parkedCountNum">0</span>)</h3>
+            <span>Ready for evaluation during weekly or monthly reviews.</span>
+          </div>
+          <div class="parking-list" id="parkingLotList"></div>
+        </div>
+      </section>
+
+      <!-- ========================================================
+           VIEW: CALENDAR & TIME AWARENESS
+           ======================================================== -->
+      <section class="page alternate-page hidden" id="calendarView">
+        <p class="eyebrow">CALENDAR AS A CONSTRAINT</p>
+        <h1>Calendar &amp; Time Budget</h1>
+        <p class="subtitle">Meetings define constraints on the day. The assistant calculates actual available focus blocks so you never plan 8 hours into a 3-hour window.</p>
+
+        <div class="calendar-sync-card">
+          <div class="scanner-header">
+            <div>
+              <span class="context-tag">GOOGLE CALENDAR (.ICS) LIVE FEED</span>
+              <h3>Live Calendar Constraints</h3>
+              <p id="calFeedStatusText">Connected to Google Calendar: <b>vaibhav.satish.sa8yn@gmail.com</b> · Auto-syncing real-time commitments.</p>
+            </div>
+            <div class="scanner-buttons">
+              <button class="primary-button" id="syncCalendarNowBtn"><span>⟳</span> Sync Google Calendar</button>
+              <button class="secondary-btn" id="editCalUrlBtn">Change Feed URL</button>
+              <label class="secondary-btn file-pick-label" style="cursor:pointer">
+                <span>📁 Upload .ics</span>
+                <input type="file" id="icsFileInput" accept=".ics" hidden>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="columns" style="margin-top:24px">
+          <div class="left-column">
+            <div class="panel">
+              <div class="panel-heading">
+                <div class="panel-icon meeting-icon">◷</div>
+                <div>
+                  <h3>Today's Commitments</h3>
+                  <p>Blocks when deep focus is NOT possible</p>
+                </div>
+                <button class="text-button" id="calAddMeetingBtn">＋ Add Meeting</button>
+              </div>
+              <div class="item-list" id="calendarFullMeetingList"></div>
+            </div>
+          </div>
+          <aside class="right-column">
+            <div class="context-card">
+              <div class="context-top">
+                <span class="context-sparkle">✳</span>
+                <span class="context-tag">CALENDAR REALITY</span>
+              </div>
+              <h3>Identified Focus Windows</h3>
+              <div id="focusWindowsList" class="focus-windows-list"></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ========================================================
+           VIEW: REVIEWS & ACCOUNTABILITY LOG
+           ======================================================== -->
+      <section class="page alternate-page hidden" id="reviewView">
+        <div class="page-header-row">
+          <div>
+            <p class="eyebrow">EVALUATE REALITY · NOT GUILT</p>
+            <h1>Reviews &amp; Execution Data</h1>
+            <p class="subtitle">Compare planned vs completed work. Identify why tasks stall (too vague? low energy? lack of time?) to make tomorrow smoother.</p>
+          </div>
+          <div class="greeting-actions">
+            <button class="secondary-btn" id="runShutdownBtn">🌙 End-of-Day Shutdown</button>
+            <button class="primary-button" id="runWeeklyReviewBtn">⟳ Weekly Review</button>
+          </div>
+        </div>
+
+        <!-- Weekly Summary Metrics -->
+        <div class="review-stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">FOCUS SESSIONS</span>
+            <b class="stat-val" id="statCompletedFocusCount">0</b>
+            <small>Deep work blocks executed</small>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">TOTAL FOCUS MINUTES</span>
+            <b class="stat-val" id="statTotalFocusMinutes">0m</b>
+            <small>Actual focused time</small>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">TASKS FINISHED</span>
+            <b class="stat-val" id="statTasksDoneCount">0</b>
+            <small>Meaningful steps closed</small>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">STALE PROJECTS</span>
+            <b class="stat-val" id="statStaleProjectsCount">0</b>
+            <small>&gt;7 days without movement</small>
+          </div>
+        </div>
+
+        <!-- Factual Insights & Friction Breakdown -->
+        <div class="panel" style="margin-top:24px">
+          <div class="panel-heading">
+            <div class="panel-icon task-icon">⟳</div>
+            <div>
+              <h3>Recent Execution Log &amp; Check-ins</h3>
+              <p>Factual data on starts, completions, and friction causes.</p>
+            </div>
+          </div>
+          <div class="log-table-container">
+            <table class="log-table">
+              <thead>
+                <tr>
+                  <th>TIME</th>
+                  <th>ACTION</th>
+                  <th>RESULT</th>
+                  <th>REASON / RECOVERY NOTE</th>
+                </tr>
+              </thead>
+              <tbody id="executionLogBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================================
+           VIEW: WORKSPACE SCANNER (Preserved & Enhanced)
+           ======================================================== -->
+      <section class="page alternate-page hidden" id="contextView">
+        <p class="eyebrow">MAKE IT INTELLIGENT</p>
+        <h1>Workspace Context &amp; Scanner</h1>
+        <p class="subtitle">Connect your workspace notes or files. Daymark scans markdown TODOs and milestones, allowing you to convert them directly into frictionless concrete actions.</p>
+        
+        <div class="workspace-scanner-card">
+          <div class="scanner-header">
+            <div>
+              <span class="context-tag">WORKSPACE FILE SCANNER</span>
+              <h3>Scan Workspace Notes &amp; Projects</h3>
+              <p>Automatically discover TODOs, milestones, and deliverables from your workspace markdown files.</p>
+            </div>
+            <div class="scanner-buttons">
+              <button class="primary-button" id="scanFolderBtn">📁 Connect Workspace Folder <span>→</span></button>
+              <label class="secondary-btn file-pick-label">
+                <span>Select Folder / Files</span>
+                <input type="file" id="fallbackFileInput" webkitdirectory directory multiple hidden>
+              </label>
+            </div>
+          </div>
+          <div id="scannedFilesContainer" class="scanned-files-container hidden">
+            <div class="scanned-meta" id="scannedMeta">Scanning workspace...</div>
+            <div class="detected-tasks-list" id="detectedTasksList"></div>
+          </div>
+        </div>
+
+        <div class="context-editor">
+          <label for="contextInput">ADDITIONAL WORKSPACE NOTES &amp; CONTEXT</label>
+          <textarea id="contextInput" rows="5" placeholder="Notes on active milestones, priorities, or deliverables..."></textarea>
+          <div class="editor-footer">
+            <span>Saved in local storage.</span>
+            <button class="primary-button" id="saveContext">Save context <span>→</span></button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer-note">
+        <span>✳</span> Consistency beats intensity. One concrete thing at a time.
+      </footer>
+    </main>
+  </div>
+
+  <!-- ========================================================
+       MODAL: FULLSCREEN FOCUS MODE (When "START" is clicked)
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="focusModeBackdrop">
+    <section class="modal focus-modal" role="dialog" aria-modal="true">
+      <div class="focus-top-bar">
+        <span class="badge primary-badge">FOCUS BLOCK IN PROGRESS</span>
+        <button class="icon-button" id="minimizeFocusBtn" title="Minimize / Pause">✕</button>
+      </div>
+
+      <div class="focus-center-content">
+        <p class="eyebrow" id="focusProjectTag">PROJECT: BUILD REMINDER ASSISTANT</p>
+        <h1 class="focus-task-title" id="focusTaskTitle">Open the codebase and implement the /login route</h1>
+        <p class="focus-next-step" id="focusNextStep">First concrete step: Open authController.js and write the callback function.</p>
+
+        <!-- Big Countdown Timer -->
+        <div class="focus-timer-display" id="focusTimerDisplay">25:00</div>
+        
+        <div class="focus-progress-bar">
+          <div class="focus-progress-fill" id="focusProgressFill" style="width: 100%"></div>
+        </div>
+
+        <div class="focus-controls">
+          <button class="secondary-btn" id="pauseResumeTimerBtn">⏸ Pause</button>
+          <button class="secondary-btn danger-text" id="blockedFocusBtn">✋ I'm Blocked / Need Smaller Step</button>
+          <button class="primary-button focus-finish-btn" id="finishFocusBtn">✓ Mark Done &amp; Check In <span>→</span></button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: COMPLETION CHECK-IN & RECOVERY
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="checkinModalBackdrop">
+    <section class="modal checkin-modal" role="dialog" aria-modal="true">
+      <button class="modal-close" id="closeCheckinBtn">×</button>
+      <p class="eyebrow">COMPLETION CHECK-IN</p>
+      <h2>Did you complete this focus block?</h2>
+      <p class="modal-subtitle" id="checkinTaskName">Task Name</p>
+
+      <div class="checkin-status-grid">
+        <button class="status-btn" data-status="done">
+          <span class="status-icon">✓</span>
+          <b>Done</b>
+          <small>Fully completed</small>
+        </button>
+        <button class="status-btn" data-status="partially_done">
+          <span class="status-icon">◐</span>
+          <b>Partially Done</b>
+          <small>Made progress</small>
+        </button>
+        <button class="status-btn" data-status="blocked">
+          <span class="status-icon">✋</span>
+          <b>Blocked</b>
+          <small>Stuck or waiting</small>
+        </button>
+        <button class="status-btn" data-status="didnt_start">
+          <span class="status-icon">✕</span>
+          <b>Didn't Start</b>
+          <small>Got distracted / skipped</small>
+        </button>
+        <button class="status-btn" data-status="dropped">
+          <span class="status-icon">🗑</span>
+          <b>No Longer Important</b>
+          <small>Drop it deliberately</small>
+        </button>
+      </div>
+
+      <!-- Friction & Recovery Reason Box (Shown if not Done) -->
+      <div class="recovery-box hidden" id="recoveryBox">
+        <label>WHAT HAPPENED? (SELECT CLOSEST):</label>
+        <div class="reason-pills">
+          <button class="reason-pill active" data-reason="Too vague or ambitious">Too vague / ambitious</button>
+          <button class="reason-pill" data-reason="Too difficult / under-estimated">Too difficult</button>
+          <button class="reason-pill" data-reason="Low energy / distracted">Low energy / distracted</button>
+          <button class="reason-pill" data-reason="Not enough calendar time">Not enough time</button>
+          <button class="reason-pill" data-reason="Blocked on external dependency">External blocker</button>
+        </div>
+
+        <div class="micro-action-prompt">
+          <label for="recoveryMicroInput">REDUCE FRICTION: WHAT IS THE SMALLEST 5–10 MINUTE ACTION TO RESTART?</label>
+          <input id="recoveryMicroInput" placeholder="e.g. Just write the 3 test assertions, nothing else.">
+        </div>
+      </div>
+
+      <div style="margin-top:20px">
+        <button class="primary-button modal-submit" id="submitCheckinBtn">Confirm Check-in <span>→</span></button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: ACTIVE PROJECT LIMIT GUARDRAIL (Max 3)
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="activeLimitModalBackdrop">
+    <section class="modal" role="dialog" aria-modal="true">
+      <button class="modal-close" id="closeActiveLimitBtn">×</button>
+      <p class="eyebrow" style="color:#b35942">ACTIVE PROJECT LIMIT REACHED (3/3)</p>
+      <h2>Which project will you pause?</h2>
+      <p class="modal-subtitle">You cannot accumulate unlimited active commitments. To activate this project, choose which existing one to pause.</p>
+      
+      <div id="pauseOptionsList" class="pause-options-list"></div>
+
+      <div class="alarm-actions" style="margin-top:20px">
+        <button class="secondary-btn" id="keepInParkingBtn">Keep in Parking Lot</button>
+        <button class="primary-button" id="confirmTradeoffBtn">Pause Selected &amp; Activate <span>→</span></button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: END-OF-DAY SHUTDOWN
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="shutdownModalBackdrop">
+    <section class="modal" role="dialog" aria-modal="true">
+      <button class="modal-close" id="closeShutdownBtn">×</button>
+      <p class="eyebrow">END-OF-DAY SHUTDOWN</p>
+      <h2>Close out today cleanly.</h2>
+      <p class="modal-subtitle">Do NOT automatically roll unfinished tasks forward. Only carry forward what genuinely still matters.</p>
+
+      <div class="shutdown-section">
+        <div class="shutdown-subhead">TODAY'S WINS</div>
+        <div id="shutdownDoneList" class="brief-item-list"></div>
+      </div>
+
+      <div class="shutdown-section" style="margin-top:16px">
+        <div class="shutdown-subhead">UNFINISHED WORK — WHAT STILL MATTERS?</div>
+        <div id="shutdownPendingList" class="shutdown-pending-list"></div>
+      </div>
+
+      <div style="margin-top:22px">
+        <button class="primary-button modal-submit" id="completeShutdownBtn">Complete Shutdown &amp; Disconnect <span>→</span></button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: EDIT DAILY BIG THREE
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="editBigThreeModalBackdrop">
+    <section class="modal" role="dialog" aria-modal="true">
+      <button class="modal-close" id="closeBigThreeBtn">×</button>
+      <p class="eyebrow">INTENTIONAL FOCUS</p>
+      <h2>Define Today's Big Three</h2>
+      <p class="modal-subtitle">At most 3 meaningful outcomes. Everything else is secondary.</p>
+
+      <form id="bigThreeForm">
+        <label for="primaryInput">1. PRIMARY OUTCOME (THE #1 MUST-WIN)</label>
+        <input id="primaryInput" required placeholder="e.g. Implement Google Calendar OAuth callback">
+
+        <label for="sec1Input">2. SECONDARY OUTCOME 1</label>
+        <input id="sec1Input" placeholder="e.g. Complete 2 team calls without distractions">
+
+        <label for="sec2Input">3. SECONDARY OUTCOME 2</label>
+        <input id="sec2Input" placeholder="e.g. 30 minutes physical exercise">
+
+        <button class="primary-button modal-submit" type="submit">Save Daily Big Three <span>→</span></button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: ADD CONCRETE TASK
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <button class="modal-close" id="modalClose">×</button>
+      <p class="eyebrow" id="modalEyebrow">CONCRETE EXECUTION</p>
+      <h2 id="modalTitle">Add Concrete Action</h2>
+      <p class="modal-subtitle" id="modalSubtitle">Make it concrete enough that you know exactly what to do when starting.</p>
+      
+      <form id="itemForm">
+        <label for="itemTitle">WHAT SPECIFIC ACTION WILL YOU TAKE?</label>
+        <input id="itemTitle" maxlength="140" required placeholder="e.g. Open authController.js and write the callback">
+
+        <div class="form-grid">
+          <div>
+            <label for="itemProjectSelect">ATTACH TO PROJECT</label>
+            <select id="itemProjectSelect"></select>
+          </div>
+          <div>
+            <label for="itemTierSelect">COMMITMENT TIER</label>
+            <select id="itemTierSelect">
+              <option value="must">MUST (Vital for today)</option>
+              <option value="should">SHOULD (Important / flexible)</option>
+              <option value="optional">OPTIONAL (Energy permitting)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div>
+            <label for="itemDurationSelect">ESTIMATED DURATION</label>
+            <select id="itemDurationSelect">
+              <option value="15">15 mins (Micro-step)</option>
+              <option value="30" selected>30 mins (Standard focus block)</option>
+              <option value="45">45 mins (Deep work block)</option>
+              <option value="60">60 mins</option>
+              <option value="90">90 mins (Max focus block)</option>
+            </select>
+          </div>
+          <div>
+            <label for="itemTime">SCHEDULED TIME (OPTIONAL)</label>
+            <input id="itemTime" type="time">
+          </div>
+        </div>
+
+        <label for="itemNote">NEXT CONCRETE FIRST STEP</label>
+        <input id="itemNote" maxlength="160" placeholder="e.g. First: run npm test to inspect failing test">
+
+        <button class="primary-button modal-submit" type="submit">Save Action <span>→</span></button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: ADD / EDIT PROJECT
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="projectModalBackdrop">
+    <section class="modal" role="dialog" aria-modal="true">
+      <button class="modal-close" id="closeProjectModalBtn">×</button>
+      <p class="eyebrow">FINITE PROJECT WITH OUTCOME</p>
+      <h2>Add New Project</h2>
+      <p class="modal-subtitle">Projects must have a clear desired outcome and a next concrete step.</p>
+
+      <form id="projectForm">
+        <label for="projNameInput">PROJECT NAME</label>
+        <input id="projNameInput" required placeholder="e.g. Build Reminder Assistant">
+
+        <label for="projOutcomeInput">DESIRED OUTCOME (HOW DO YOU KNOW IT'S FINISHED?)</label>
+        <input id="projOutcomeInput" required placeholder="e.g. Working assistant that runs every morning on my desk">
+
+        <label for="projMilestoneInput">CURRENT MILESTONE</label>
+        <input id="projMilestoneInput" placeholder="e.g. Complete Google Calendar iCal sync">
+
+        <label for="projNextActionInput">NEXT CONCRETE ACTION</label>
+        <input id="projNextActionInput" required placeholder="e.g. Implement .ics parser for today's events">
+
+        <button class="primary-button modal-submit" type="submit">Save Project <span>→</span></button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: DAILY BRIEFING & ALARM POP-UP (Preserved & Enhanced)
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="dailyBriefModalBackdrop">
+    <section class="modal alarm-modal" role="dialog" aria-modal="true" aria-labelledby="briefModalTitle">
+      <button class="modal-close" id="briefModalClose">×</button>
+      <div class="alarm-header-badge" id="alarmBadge">
+        <span class="alarm-ringing-bell">🔔</span>
+        <span class="alarm-badge-text" id="alarmBadgeText">DAILY REMINDER &amp; ALARM</span>
+      </div>
+      <p class="eyebrow" id="briefModalEyebrow">TODAY'S MORNING BRIEF</p>
+      <h2 id="briefModalTitle">Good morning. Here is your day.</h2>
+      <p class="modal-subtitle" id="briefModalSubtitle">Review today's agenda, meetings, and workspace priorities.</p>
+
+      <div class="brief-sections">
+        <div class="brief-section">
+          <div class="brief-section-title">
+            <span class="badge primary-badge">BIG THREE</span>
+            <b id="briefBigThreeTitle">Primary: Google Calendar OAuth Integration</b>
+          </div>
+        </div>
+
+        <div class="brief-section">
+          <div class="brief-section-title"><span class="panel-icon task-icon">✓</span> <b>Things To Get Done Today</b> <span class="brief-count" id="briefTaskCount">0</span></div>
+          <div class="brief-item-list" id="briefTaskList"></div>
+        </div>
+
+        <div class="brief-section">
+          <div class="brief-section-title"><span class="panel-icon meeting-icon">◷</span> <b>Calendar Commitments</b> <span class="brief-count" id="briefMeetingCount">0</span></div>
+          <div class="brief-item-list" id="briefMeetingList"></div>
+        </div>
+
+        <div class="brief-section brief-context-box" id="briefContextBox">
+          <div class="brief-section-title"><span class="context-sparkle">✳</span> <b>Workspace Context &amp; Milestones</b></div>
+          <p class="brief-context-text" id="briefContextText">No active workspace context set.</p>
+        </div>
+      </div>
+
+      <div class="alarm-actions">
+        <button class="secondary-btn" id="snoozeAlarmBtn">Snooze (10 mins)</button>
+        <button class="primary-button modal-submit" id="dismissAlarmBtn">Dismiss Alarm &amp; Start Day <span>→</span></button>
+      </div>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: EDIT GOOGLE CALENDAR URL
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="calUrlModalBackdrop">
+    <section class="modal" role="dialog" aria-modal="true">
+      <button class="modal-close" id="closeCalUrlModalBtn">×</button>
+      <p class="eyebrow">GOOGLE CALENDAR ICAL FEED</p>
+      <h2>Connect Google Calendar</h2>
+      <p class="modal-subtitle">Paste your Google Calendar secret iCal (.ics) address to enable automatic synchronization.</p>
+      <form id="calUrlForm">
+        <label for="calUrlInput">SECRET ICAL (.ICS) FEED URL</label>
+        <input id="calUrlInput" type="url" required placeholder="https://calendar.google.com/calendar/ical/.../basic.ics">
+        <p class="form-helper" style="font-size:10px; color:#85897e; margin-top:6px;">In Google Calendar: Settings &gt; Integrate calendar &gt; Secret address in iCal format.</p>
+        <button class="primary-button modal-submit" type="submit">Save &amp; Sync Calendar <span>→</span></button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       MODAL: AI INTELLIGENCE SETTINGS
+       ======================================================== -->
+  <div class="modal-backdrop hidden" id="aiConfigModalBackdrop">
+    <section class="modal" role="dialog" aria-modal="true">
+      <button class="modal-close" id="closeAiConfigModalBtn">×</button>
+      <p class="eyebrow">AI INTELLIGENCE ENGINE</p>
+      <h2>Assistant Intelligence Settings</h2>
+      <p class="modal-subtitle">Connect a real language model (Google Gemini or Ollama) for arbitrary conversational flexibility, or use Daymark's high-speed local semantic engine.</p>
+      
+      <form id="aiConfigForm">
+        <label for="aiProviderSelect">INTELLIGENCE ENGINE</label>
+        <select id="aiProviderSelect" style="width:100%; height:38px; border:1px solid #ddd9cd; border-radius:6px; background:#fff; padding:0 10px;">
+          <option value="local">Built-in Semantic Engine (Fast, 100% Offline)</option>
+          <option value="gemini">Google Gemini API (Flash 1.5/2.0 — Free, Fast)</option>
+          <option value="ollama">Local Ollama (llama3.2, qwen2.5, gemma2)</option>
+        </select>
+
+        <div id="geminiConfigGroup" class="hidden" style="margin-top:14px">
+          <label for="geminiApiKeyInput">GOOGLE GEMINI API KEY</label>
+          <input id="geminiApiKeyInput" type="password" placeholder="AIzaSy...">
+          <p style="font-size:10px; color:#85897e; margin-top:5px">Free API key available in seconds at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="text-decoration:underline; color:#355340">aistudio.google.com</a> (Free tier: 15 req/min).</p>
+        </div>
+
+        <div id="ollamaConfigGroup" class="hidden" style="margin-top:14px">
+          <label for="ollamaUrlInput">OLLAMA URL</label>
+          <input id="ollamaUrlInput" type="url" value="http://localhost:11434">
+          <label for="ollamaModelInput" style="margin-top:8px">MODEL NAME</label>
+          <input id="ollamaModelInput" type="text" value="llama3.2" placeholder="e.g. llama3.2, qwen2.5">
+        </div>
+
+        <button class="primary-button modal-submit" type="submit" style="margin-top:18px">Save AI Settings <span>→</span></button>
+      </form>
+    </section>
+  </div>
+
+  <!-- ========================================================
+       FLOATING ASSISTANT TRIGGER (TASKBAR / QUICK HUD)
+       ======================================================== -->
+  <div class="floating-assistant-trigger" id="floatingChatBtn" title="Ask Daymark Assistant (Ctrl+K or Alt+A)">
+    <span class="pulse-dot"></span>
+    <span class="trigger-icon">✦</span>
+    <span class="trigger-label">Ask Assistant <kbd>Ctrl+K</kbd></span>
+  </div>
+
+  <!-- ========================================================
+       CONVERSATIONAL ASSISTANT DRAWER / HUD
+       ======================================================== -->
+  <div class="assistant-drawer-overlay hidden" id="assistantDrawerOverlay">
+    <aside class="assistant-drawer" id="assistantDrawer" role="dialog" aria-labelledby="chatTitle">
+      <div class="assistant-drawer-header">
+        <div class="assistant-header-info">
+          <div class="assistant-avatar">✦</div>
+          <div>
+            <h3 id="chatTitle">Daymark Assistant</h3>
+            <span class="assistant-sub" id="assistantSubStatus">🟢 Google Calendar Synced · 30m Sprint Active</span>
+          </div>
+        </div>
+        <div class="assistant-header-actions">
+          <button class="icon-button" id="chatAiConfigBtn" title="AI Engine Settings (Gemini / Ollama / Local)">⚙</button>
+          <button class="icon-button" id="chatSyncCalBtn" title="Sync Google Calendar Now">⟳</button>
+          <button class="icon-button" id="restartServerBtn" title="Restart Server (picks up code changes)">↺</button>
+          <button class="icon-button" onclick="copyFullConversation()" title="Copy full conversation">⎘</button>
+          <button class="icon-button" id="closeAssistantBtn" title="Close Assistant (Esc)">✕</button>
+        </div>
+      </div>
+
+      <!-- Quick Suggestion Chips -->
+      <div class="assistant-quick-chips">
+        <button class="chip-btn" data-query="Hey, how is my 12th November looking?">📅 12th Nov?</button>
+        <button class="chip-btn" data-query="How's my this saturday looking?">🗓 This Saturday?</button>
+        <button class="chip-btn" data-query="What tasks and meetings do I have today?">⚡ Today's Agenda</button>
+        <button class="chip-btn" data-query="Check in on my tasks">🎯 Check In</button>
+        <button class="chip-btn" data-query="add this coming friday as the project deadline">⏳ Add Deadline</button>
+      </div>
+
+      <!-- Chat History Stream -->
+      <div class="assistant-messages-container" id="assistantMessages">
+        <!-- Messages injected here by app.js -->
+      </div>
+
+      <!-- Chat Input Area -->
+      <form class="assistant-input-row" id="assistantChatForm">
+        <input type="text" id="assistantChatInput" placeholder="Ask: 'How is 12th Nov looking?', 'Add deadline Friday', 'Doing'..." autocomplete="off">
+        <button type="button" class="mic-button" id="speechBtn" title="Voice Input (Speech-to-Text)">🎙</button>
+        <button type="submit" class="send-button" id="sendChatBtn">Send ↗</button>
+      </form>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

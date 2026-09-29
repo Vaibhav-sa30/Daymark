@@ -1,0 +1,42 @@
+{
+  "name": "Daymark — Execution & Accountability Assistant",
+  "short_name": "Daymark",
+  "description": "Personal execution and accountability coach with calendar constraints",
+  "start_url": "/?source=pwa",
+  "display": "standalone",
+  "background_color": "#fbfaf7",
+  "theme_color": "#2c4033",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Today's Briefing",
+      "short_name": "Today",
+      "description": "Open today's must-win execution cockpit",
+      "url": "/?view=today"
+    },
+    {
+      "name": "Ask Assistant",
+      "short_name": "Assistant",
+      "description": "Chat with Daymark Assistant",
+      "url": "/?action=chat"
+    },
+    {
+      "name": "Calendar Sync",
+      "short_name": "Calendar",
+      "description": "View calendar focus budget",
+      "url": "/?view=calendar"
+    }
+  ]
+}
