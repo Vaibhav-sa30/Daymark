@@ -1,6 +1,6 @@
 # Portfolio Updates integration setup
 
-The module stores check-ins, submissions, proposals, and lifecycle events in the local Daymark SQLite store first. Supabase and GitHub are optional external integrations; missing credentials leave drafts on this device and never make a publication claim.
+The module stores check-ins, submissions, proposals, and lifecycle events in the local Daymark SQLite store first. The test build checks in every **1 minute** during waking hours; change this after testing. Supabase and GitHub are optional external integrations; missing credentials leave drafts on this device and never make a publication claim.
 
 ## Supabase event logging
 

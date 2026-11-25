@@ -24,7 +24,16 @@
       ...options,
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
     });
-    const result = await response.json();
+    const responseText = await response.text();
+    let result;
+    try {
+      result = responseText ? JSON.parse(responseText) : null;
+    } catch (_) {
+      throw new Error(`Daymark server returned an unreadable response (HTTP ${response.status}). Restart Daymark to load the updated local server.`);
+    }
+    if (!result || typeof result !== 'object') {
+      throw new Error(`Daymark server returned an empty response (HTTP ${response.status}). Restart Daymark to load the updated local server.`);
+    }
     if (!response.ok || result.status !== 'ok') throw new Error(result.message || `Daymark returned HTTP ${response.status}`);
     return result;
   }
