@@ -45,6 +45,10 @@
         <span class="nav-icon">📂</span> Workspace Scanner
       </button>
 
+      <button class="nav-item" data-view="portfolio">
+        <span class="nav-icon">✦</span> Portfolio Updates
+      </button>
+
       <div class="sidebar-bottom">
         <div class="avatar">Y</div>
         <div class="profile-copy">
@@ -476,6 +480,106 @@
         </div>
       </section>
 
+      <section class="page alternate-page hidden" id="portfolioView">
+        <div class="page-header-row">
+          <div>
+            <p class="eyebrow">RESEARCH &amp; PROFESSIONAL RECORD</p>
+            <h1>Portfolio Updates</h1>
+            <p class="subtitle">Capture what changed. Daymark will keep a local record before proposing anything for your site.</p>
+          </div>
+        </div>
+
+        <div class="portfolio-layout">
+          <section class="workspace-scanner-card portfolio-compose-card">
+            <div class="scanner-header">
+              <div>
+                <span class="context-tag">NEW UPDATE</span>
+                <h3>What changed?</h3>
+                <p>Stick to what you can support. Drafts stay local until a reviewed preview exists.</p>
+              </div>
+            </div>
+            <form id="portfolioUpdateForm" class="portfolio-form">
+              <label for="portfolioCategory">PORTFOLIO SECTION</label>
+              <select id="portfolioCategory" required>
+                <option value="research_timeline">Research timeline and milestones</option>
+                <option value="research_papers">Research papers</option>
+                <option value="research_implementations">Research implementations</option>
+                <option value="research_writeups">Research writeups</option>
+                <option value="research_artifacts">Research artifacts</option>
+                <option value="ai_safety_writings">AI Safety writings</option>
+                <option value="writings_and_essays">Other writings and essays</option>
+                <option value="projects_and_implementations">Projects and technical implementations</option>
+                <option value="coursework_and_learning">Coursework and learning milestones</option>
+                <option value="professional_experience">Professional experience and fellowships</option>
+                <option value="other">Other — let Daymark suggest a destination</option>
+              </select>
+              <label for="portfolioUpdateText">YOUR UPDATE</label>
+              <textarea id="portfolioUpdateText" rows="6" maxlength="10000" required placeholder="What did you do? What is the current status? Include only claims you can verify."></textarea>
+              <label for="portfolioLinks">SUPPORTING LINKS <span class="form-helper">One HTTP(S) link per line; optional.</span></label>
+              <textarea id="portfolioLinks" rows="3" placeholder="GitHub repository, paper, document, or other reference"></textarea>
+              <div class="editor-footer">
+                <span id="portfolioFormStatus">Your submission is saved as a local draft first.</span>
+                <button class="primary-button" type="submit">Save update <span>→</span></button>
+              </div>
+            </form>
+          </section>
+
+          <section class="workspace-scanner-card portfolio-settings-card">
+            <div class="scanner-header"><div>
+              <span class="context-tag">CHECK-IN CADENCE</span>
+              <h3>Anything Updates?</h3>
+              <p>Three-hour reminders during waking hours. Missed intervals collapse to one prompt when Daymark resumes.</p>
+            </div></div>
+            <form id="portfolioCheckinSettingsForm" class="portfolio-settings-form">
+              <label class="portfolio-check-row"><input id="portfolioCheckinEnabled" type="checkbox" checked> Enable check-ins</label>
+              <label for="portfolioIntervalMinutes">REMIND EVERY (MINUTES)</label>
+              <input id="portfolioIntervalMinutes" type="number" min="1" max="1440" value="1" required>
+              <div class="portfolio-time-grid">
+                <div><label for="portfolioWakeStart">WAKE FROM</label><input id="portfolioWakeStart" type="number" min="0" max="23" value="9" required></div>
+                <div><label for="portfolioWakeEnd">QUIET AFTER</label><input id="portfolioWakeEnd" type="number" min="0" max="23" value="21" required></div>
+              </div>
+              <label for="portfolioSnoozeMinutes">SNOOZE (MINUTES)</label>
+              <input id="portfolioSnoozeMinutes" type="number" min="5" max="240" value="60" required>
+              <button class="secondary-btn" type="submit">Save reminder settings</button>
+              <span id="portfolioSettingsStatus" class="form-helper" role="status"></span>
+            </form>
+          </section>
+          <section class="workspace-scanner-card portfolio-settings-card">
+            <div class="scanner-header"><div>
+              <span class="context-tag">INTEGRATIONS</span>
+              <h3>Private connections</h3>
+              <p>Secrets are stored in Windows Credential Manager (with a DPAPI-encrypted fallback) and never returned to the page or sent to AI.</p>
+            </div></div>
+            <form id="portfolioIntegrationForm" class="portfolio-settings-form">
+              <label for="portfolioSupabaseUrl">SUPABASE EDGE FUNCTION URL</label>
+              <input id="portfolioSupabaseUrl" type="url" placeholder="https://project.supabase.co/functions/v1/daymark-portfolio-events">
+              <span id="portfolioIntegrationStatus" class="form-helper" role="status"></span>
+              <button class="secondary-btn" type="submit">Save Supabase function URL</button>
+              <button class="secondary-btn" id="openCredentialPrompt" type="button">Configure private credentials securely</button>
+              <span class="form-helper">Token permissions and Supabase setup: <a href="PORTFOLIO-UPDATES-SETUP.md" target="_blank" rel="noopener noreferrer">open setup guide</a>. The portfolio repository also has an existing GitHub Pages deploy on main.</span>
+            </form>
+          </section>
+        </div>
+
+        <section class="workspace-scanner-card portfolio-history-card">
+          <div class="scanner-header"><div>
+            <span class="context-tag">UPDATE HISTORY</span>
+            <h3>Recent submissions</h3>
+            <p id="portfolioHistorySummary">Local drafts and their review status.</p>
+          </div><button class="secondary-btn" id="refreshPortfolioHistory" type="button">Refresh</button></div>
+          <div id="portfolioUpdateHistory" class="portfolio-history-list"></div>
+        </section>
+
+        <section class="workspace-scanner-card portfolio-history-card">
+          <div class="scanner-header"><div>
+            <span class="context-tag">GENUINE CHECK-INS</span>
+            <h3>Check-in history</h3>
+            <p>Only responses you choose are recorded. Reminder prompts are not logged as activity.</p>
+          </div></div>
+          <div id="portfolioCheckinHistory" class="portfolio-history-list"></div>
+        </section>
+      </section>
+
       <footer class="footer-note">
         <span>✳</span> Consistency beats intensity. One concrete thing at a time.
       </footer>
@@ -881,5 +985,6 @@
 
   <div class="toast" id="toast" role="status"></div>
   <script src="app.js"></script>
+  <script src="portfolio_updates.js"></script>
 </body>
 </html>

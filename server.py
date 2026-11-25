@@ -14,6 +14,10 @@ import datetime
 import time
 import threading
 import sys
+import subprocess
+import ipaddress
+
+import portfolio_updates as portfolio_store
 
 PORT = 4173
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "calendar_config.json")
@@ -24,7 +28,36 @@ DEFAULT_CALENDAR_URL = ""
 PLANNER_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "planner_config.json")
 TASKS_FILE = os.path.join(os.path.dirname(__file__), "daymark_tasks.json")
 EVENTS_FILE = os.path.join(os.path.dirname(__file__), "daymark_events.json")
+ROUTINES_FILE = os.path.join(os.path.dirname(__file__), "daymark_routines.json")
+API_AUDIT_FILE = os.path.join(os.path.dirname(__file__), "_daymark_api.log")
+APP_WINDOW_FILE = os.path.join(os.path.dirname(__file__), "app_window.py")
 TASKS_LOCK = threading.Lock()
+
+DEFAULT_ROUTINES_CONFIG = {
+    "daily_alarm": {"enabled": True, "time": "08:30"},
+    "routines": []
+}
+
+
+def load_routines_config():
+    try:
+        with open(ROUTINES_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        if not isinstance(config, dict):
+            return dict(DEFAULT_ROUTINES_CONFIG)
+        return {
+            "daily_alarm": {**DEFAULT_ROUTINES_CONFIG["daily_alarm"], **(config.get("daily_alarm") or {})},
+            "routines": config.get("routines", []) if isinstance(config.get("routines", []), list) else []
+        }
+    except (OSError, json.JSONDecodeError):
+        return dict(DEFAULT_ROUTINES_CONFIG)
+
+
+def save_routines_config(config):
+    temp_file = ROUTINES_FILE + ".tmp"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    os.replace(temp_file, ROUTINES_FILE)
 
 def load_shared_tasks():
     try:
@@ -53,6 +86,16 @@ def save_shared_events(events):
     with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(events, f, ensure_ascii=False, indent=2)
     os.replace(temp_file, EVENTS_FILE)
+
+
+def audit_shared_change(collection, operation, identifiers, item_count):
+    """Keep a small local audit trail for Telegram/app synchronization issues."""
+    try:
+        ids = ",".join(str(value) for value in identifiers[:3])
+        with open(API_AUDIT_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} {collection} {operation} ids={ids} count={item_count}\n")
+    except OSError:
+        pass
 
 def get_planner_config():
     if os.path.exists(PLANNER_CONFIG_FILE):
@@ -85,6 +128,9 @@ def build_daily_plan_for_today(planner, now):
     for slot in slots:
         goal_id = slot.get("goal_id", "")
         goal = goals_by_id.get(goal_id, {})
+        # A weekly-cadence goal appears only on days explicitly selected for it.
+        if goal.get("cadence", "").endswith("_week") and goal_id not in non_negotiables:
+            continue
         label = slot.get("label", goal.get("name", ""))
         time_slot = slot.get("time", "")
         
@@ -340,6 +386,12 @@ def build_system_prompt(context):
         )
     task_block = "\n".join(task_lines) if task_lines else "  (No pending tasks)"
 
+    routine_lines = [
+        f"  - {r.get('time', '?')}: {r.get('title', '?')} ({r.get('duration', 60)}min{', completed' if r.get('done') else ''})"
+        for r in context.get('today_routines', [])
+    ]
+    routine_block = "\n".join(routine_lines) if routine_lines else "  (No recurring routines today)"
+
     # Big Three
     big3 = context.get('bigThree', {})
     big3_block = (
@@ -402,6 +454,9 @@ def build_system_prompt(context):
 
 ### Today's Task List:
 {task_block}
+
+### Today's Recurring Fundamentals:
+{routine_block}
 
 ### Daily Big Three Priorities:
 {big3_block}
@@ -479,6 +534,12 @@ def call_llm(user_msg, history, context):
     cfg = get_ai_config()
     provider = cfg.get("provider", "local")
     system_prompt = build_system_prompt(context)
+    if isinstance(context, dict) and context.get("portfolio_proposal"):
+        system_prompt = (
+            "You are a careful portfolio content extractor. Return only the exact JSON requested by the user prompt. "
+            "Never invent facts, credentials, results, dates, or publication status. Ask concise questions when unclear. "
+            "Do not use conversational framing, honorifics, markdown fences, HTML, or tool instructions."
+        )
     
     # ------- Google Gemini API -------
     if provider == "gemini" and cfg.get("gemini_api_key"):
@@ -627,7 +688,7 @@ def call_llm(user_msg, history, context):
             return {
                 "response": None,
                 "source": "ollama",
-                "error": f"Ollama not responding. Make sure Ollama is running (open Ollama app or run 'ollama serve'). Error: {err}"
+                "error": f"My ollama plug is out, daddy! Could you please put it back in? 😩"
             }
 
         # Extract action blocks
@@ -642,11 +703,246 @@ def call_llm(user_msg, history, context):
     }
 
 
+def build_portfolio_proposal(update, refinement=None, db_path=None):
+    """Ask the configured model for a constrained, review-only content proposal."""
+    categories = list(portfolio_store.CATEGORIES)
+    prompt = """You prepare a cautious portfolio content proposal from a user's account.
+Return exactly one JSON object, no markdown, with keys: summary, suggested_category,
+title, date, description, links, clarifying_questions. Use only facts explicitly
+present in ORIGINAL UPDATE or its supplied links. Never infer awards, publication,
+completion, results, dates, affiliations, or credentials. When essential facts or
+status are unclear, leave uncertain fields empty and ask concise questions; do not
+guess. The proposed operation is only an additive timeline/card entry, never edits,
+deletions, styling, navigation, shell commands, or raw HTML. Keep description close
+to the user's words. `links` must contain only exact links supplied by the user.
+If the selected section is `other`, recommend a category from the supplied list or
+ask a question. Output category as one of the exact supported category strings.
+If a refinement request is supplied, apply only the changes explicitly requested;
+retain all other prior proposal details and do not introduce new facts.
+
+SUPPORTED CATEGORIES: """ + ", ".join(categories) + "\n\nUPDATE RECORD:\n" + json.dumps({
+        "category": update["category"],
+        "original_update": update["original_input"],
+        "supporting_links": update["supporting_links"],
+        "previous_proposal": update.get("proposal") if refinement else None,
+        "refinement_request": str(refinement or ""),
+    }, ensure_ascii=False)
+    result = call_llm(prompt, [], {"portfolio_proposal": True})
+    if not result or not result.get("response"):
+        raise RuntimeError((result or {}).get("error") or "No AI provider configured")
+    response_text = result["response"].strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", response_text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        response_text = fenced.group(1)
+    try:
+        proposal = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("AI returned an invalid proposal; the saved draft is unchanged") from exc
+    if not isinstance(proposal, dict):
+        raise ValueError("AI proposal must be a JSON object")
+    category = proposal.get("suggested_category")
+    if category not in categories:
+        raise ValueError("AI proposal selected an unsupported category")
+    questions = proposal.get("clarifying_questions", [])
+    if not isinstance(questions, list) or len(questions) > 8 or any(not isinstance(q, str) or len(q) > 500 for q in questions):
+        raise ValueError("AI clarification questions failed validation")
+    title = proposal.get("title", "")
+    date = proposal.get("date", "")
+    description = proposal.get("description", "")
+    if any(not isinstance(value, str) or len(value) > limit for value, limit in
+           ((title, 180), (date, 80), (description, 3000))):
+        raise ValueError("AI proposal fields failed validation")
+    links = proposal.get("links", [])
+    if not isinstance(links, list) or any(link not in update["supporting_links"] for link in links):
+        raise ValueError("AI proposed a link that the user did not supply")
+    summary = proposal.get("summary", "")
+    if not isinstance(summary, str) or len(summary) > 1000:
+        raise ValueError("AI proposal summary failed validation")
+    if not title and not questions:
+        questions.append("What concise title should Daymark use for this portfolio entry?")
+    if not description and not questions:
+        questions.append("What short description should appear on the portfolio?")
+    if category == "other" and not questions:
+        questions.append("Which existing portfolio section should contain this update?")
+    proposal = {
+        "summary": summary,
+        "suggested_category": category,
+        "target_file": portfolio_store.PORTFOLIO_FILES.get(category),
+        "operation": "add_timeline_entry",
+        "title": title,
+        "date": date,
+        "description": description,
+        "links": links,
+        "clarifying_questions": questions,
+    }
+    status = "awaiting_clarification" if questions or not proposal["target_file"] or not title or not description else "ready_for_review"
+    portfolio_store.save_proposal(update["id"], proposal, status=status, db_path=db_path)
+    return portfolio_store.get_update(update["id"], db_path=db_path)
+
+
+_PORTFOLIO_WORKER_LOCK = threading.Lock()
+_PORTFOLIO_WORKERS = set()
+
+
+def start_portfolio_proposal(update_id, refinement=None):
+    """Process in the server background so Daymark remains responsive."""
+    with _PORTFOLIO_WORKER_LOCK:
+        if update_id in _PORTFOLIO_WORKERS:
+            return False
+        _PORTFOLIO_WORKERS.add(update_id)
+    def process():
+        update = None
+        try:
+            if not update:
+                return
+            portfolio_store.update_workflow_state(
+                update_id, "processing" if not refinement else "refinement_requested",
+                fields={"refinement_input": refinement} if refinement else {},
+            )
+            update = build_portfolio_proposal(update, refinement)
+            latest = portfolio_store.get_update(update_id)
+            if not latest or latest["status"] == "discarded":
+                return
+            if update["status"] != "ready_for_review":
+                return
+            try:
+                import portfolio_github
+                github = portfolio_github.GitHubClient()
+                if update.get("branch_name"):
+                    commit_sha = github.refine_review_branch(update)
+                else:
+                    branch = github.create_review_branch(update)
+                    commit_sha = branch["commit_sha"]
+                latest = portfolio_store.get_update(update_id)
+                if latest and latest["status"] != "discarded":
+                    github.wait_for_deployment(update_id, commit_sha)
+            except Exception as exc:
+                portfolio_store.update_workflow_state(
+                    update_id, "failed", fields={"error": str(exc)}, event_type="deployment_failed",
+                    metadata={"stage": "branch_or_preview", "error_type": type(exc).__name__},
+                )
+        except Exception as exc:
+            try:
+                if update and update.get("proposal"):
+                    portfolio_store.update_workflow_state(
+                        update_id, "failed", fields={"error": str(exc)}, event_type="ai_proposal_failed",
+                        metadata={"stage": "proposal_refinement", "error_type": type(exc).__name__},
+                    )
+                else:
+                    portfolio_store.save_proposal(update_id, {"clarifying_questions": []}, status="failed", error=str(exc))
+            except Exception as save_exc:
+                print(f"[portfolio] proposal failure could not be saved ({type(save_exc).__name__})")
+        finally:
+            with _PORTFOLIO_WORKER_LOCK:
+                _PORTFOLIO_WORKERS.discard(update_id)
+    threading.Thread(target=process, daemon=True, name=f"portfolio-proposal-{update_id[:8]}").start()
+    return True
+
+
+def start_portfolio_publish(update_id):
+    with _PORTFOLIO_WORKER_LOCK:
+        if update_id in _PORTFOLIO_WORKERS:
+            return False
+        _PORTFOLIO_WORKERS.add(update_id)
+    def publish():
+        try:
+            import portfolio_github
+            update = portfolio_store.get_update(update_id)
+            if not update or update["status"] not in {"approved", "publishing"} or not update.get("preview_url"):
+                return
+            github = portfolio_github.GitHubClient()
+            merge_sha = github.approve_review(update)
+            github.wait_for_deployment(update_id, merge_sha, production=True)
+        except Exception as exc:
+            try:
+                current = portfolio_store.get_update(update_id)
+                if current and current["status"] != "published":
+                    portfolio_store.update_workflow_state(
+                        update_id, "failed", fields={"production_status": "failed", "error": str(exc)},
+                        event_type="deployment_failed", metadata={"stage": "publish", "error_type": type(exc).__name__},
+                    )
+            except Exception as save_exc:
+                print(f"[portfolio] publish failure could not be saved ({type(save_exc).__name__})")
+        finally:
+            with _PORTFOLIO_WORKER_LOCK:
+                _PORTFOLIO_WORKERS.discard(update_id)
+    threading.Thread(target=publish, daemon=True, name=f"portfolio-publish-{update_id[:8]}").start()
+    return True
+
+
+def start_portfolio_preview_watch(update_id):
+    with _PORTFOLIO_WORKER_LOCK:
+        if update_id in _PORTFOLIO_WORKERS:
+            return False
+        _PORTFOLIO_WORKERS.add(update_id)
+    def watch():
+        try:
+            update = portfolio_store.get_update(update_id)
+            if not update or update["status"] != "awaiting_preview" or not update.get("commit_sha"):
+                return
+            import portfolio_github
+            portfolio_github.GitHubClient().wait_for_deployment(update_id, update["commit_sha"])
+        except Exception as exc:
+            try:
+                update = portfolio_store.get_update(update_id)
+                if update and update["status"] == "awaiting_preview":
+                    portfolio_store.update_workflow_state(
+                        update_id, "failed", fields={"error": str(exc)}, event_type="deployment_failed",
+                        metadata={"stage": "preview_recovery", "error_type": type(exc).__name__},
+                    )
+            except Exception:
+                pass
+        finally:
+            with _PORTFOLIO_WORKER_LOCK:
+                _PORTFOLIO_WORKERS.discard(update_id)
+    threading.Thread(target=watch, daemon=True, name=f"portfolio-preview-{update_id[:8]}").start()
+    return True
+
+
+def start_portfolio_workflow_recovery():
+    def recover():
+        while True:
+            try:
+                for update in portfolio_store.list_updates():
+                    status = update["status"]
+                    if status == "processing":
+                        start_portfolio_proposal(update["id"])
+                    elif status == "refinement_requested":
+                        start_portfolio_proposal(update["id"], update.get("refinement_input"))
+                    elif status == "awaiting_preview":
+                        start_portfolio_preview_watch(update["id"])
+                    elif status in {"approved", "publishing"}:
+                        start_portfolio_publish(update["id"])
+            except Exception as exc:
+                print(f"[portfolio] workflow recovery scan failed ({type(exc).__name__})")
+            time.sleep(30)
+    threading.Thread(target=recover, daemon=True, name="portfolio-workflow-recovery").start()
+
+
 # ============================================================
 #  HTTP Request Handler
 # ============================================================
 
 class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
+    def send_json(self, status, value):
+        response_bytes = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(response_bytes)))
+        self.end_headers()
+        self.wfile.write(response_bytes)
+
+    def portfolio_request_is_local(self):
+        try:
+            if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                return False
+            origin = self.headers.get("Origin")
+            if origin and origin not in {"http://localhost:4173", "http://127.0.0.1:4173"}:
+                return False
+            return True
+        except (ValueError, IndexError):
+            return False
+
     def end_headers(self):
         # Enable CORS for API routes
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -659,6 +955,67 @@ class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        api_path = self.path.split("?", 1)[0]
+        if api_path.startswith("/api/portfolio/") and not self.portfolio_request_is_local():
+            self.send_json(403, {"status": "error", "message": "Portfolio updates are available only from this computer."})
+            return
+        if api_path == "/api/portfolio/integration-settings":
+            try:
+                import portfolio_credentials
+                self.send_json(200, {
+                    "status": "ok",
+                    "supabase_ingest_url": portfolio_store.get_supabase_endpoint(),
+                    "secrets": {
+                        key: bool(portfolio_credentials.get_secret(key))
+                        for key in ("github_token", "supabase_ingest_token", "supabase_anon_key")
+                    },
+                })
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": f"Credential Manager unavailable: {type(exc).__name__}"})
+            return
+        if api_path == "/api/portfolio/credential-prompt":
+            try:
+                flags = 0x08000000 if sys.platform == "win32" else 0
+                startupinfo = None
+                if sys.platform == "win32":
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0
+                subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), "credential_prompt.py")],
+                                 cwd=os.path.dirname(__file__), creationflags=flags, startupinfo=startupinfo)
+                self.send_json(202, {"status": "ok", "message": "Secure credential dialog opened"})
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": f"Could not open secure credential dialog: {type(exc).__name__}"})
+            return
+        if api_path == "/api/portfolio/checkin-settings":
+            try:
+                self.send_json(200, {"status": "ok", "settings": portfolio_store.get_checkin_settings()})
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": str(exc)})
+            return
+
+        if api_path == "/api/portfolio/updates":
+            try:
+                updates = portfolio_store.list_updates()
+                for update in updates:
+                    update["events"] = portfolio_store.list_update_events(update["id"])
+                self.send_json(200, {
+                    "status": "ok",
+                    "categories": list(portfolio_store.CATEGORIES),
+                    "updates": updates,
+                    "checkins": portfolio_store.list_checkins(),
+                })
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": str(exc)})
+            return
+
+        if api_path == "/api/portfolio/ui-command":
+            try:
+                self.send_json(200, {"status": "ok", "command": portfolio_store.consume_ui_command()})
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": str(exc)})
+            return
+
         if self.path == "/api/tasks":
             with TASKS_LOCK:
                 tasks = load_shared_tasks()
@@ -674,6 +1031,17 @@ class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
             with TASKS_LOCK:
                 events = load_shared_events()
             response_bytes = json.dumps({"status": "ok", "events": events}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+            return
+
+        if self.path == "/api/routines":
+            with TASKS_LOCK:
+                config = load_routines_config()
+            response_bytes = json.dumps({"status": "ok", **config}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(response_bytes)))
@@ -810,6 +1178,195 @@ class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8")
 
+        api_path = self.path.split("?", 1)[0]
+        if api_path.startswith("/api/portfolio/") and not self.portfolio_request_is_local():
+            self.send_json(403, {"status": "error", "message": "Portfolio updates are available only from this computer."})
+            return
+        if api_path == "/api/portfolio/integration-settings":
+            try:
+                payload = json.loads(body)
+                endpoint = str(payload.get("supabase_ingest_url", "")).strip()
+                portfolio_store.save_supabase_endpoint(endpoint)
+                self.send_json(200, {"status": "ok"})
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"status": "error", "message": str(exc)})
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": f"Could not save URL: {type(exc).__name__}"})
+            return
+        if api_path == "/api/portfolio/checkin-settings":
+            try:
+                payload = json.loads(body)
+                settings = portfolio_store.save_checkin_settings(payload)
+                self.send_json(200, {"status": "ok", "settings": settings})
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"status": "error", "message": str(exc)})
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": str(exc)})
+            return
+
+        if api_path == "/api/portfolio/checkin":
+            try:
+                payload = json.loads(body)
+                response = payload.get("response")
+                if response == "remind_later":
+                    until = portfolio_store.snooze_checkin()
+                    self.send_json(200, {"status": "ok", "snooze_until": until})
+                    return
+                checkin = portfolio_store.record_checkin(
+                    response,
+                    source=payload.get("source", "daymark_popup"),
+                    metadata={"source": payload.get("source", "daymark_popup")},
+                )
+                if response == "has_update":
+                    portfolio_store.queue_ui_command("new_portfolio_update")
+                    def open_daymark():
+                        try:
+                            flags = 0x08000000 if sys.platform == "win32" else 0
+                            startupinfo = None
+                            if sys.platform == "win32":
+                                startupinfo = subprocess.STARTUPINFO()
+                                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                                startupinfo.wShowWindow = 0
+                            subprocess.Popen([sys.executable, APP_WINDOW_FILE], cwd=os.path.dirname(__file__),
+                                             creationflags=flags, startupinfo=startupinfo)
+                        except Exception as exc:
+                            print(f"[portfolio] could not open Daymark update form: {exc}")
+                    threading.Thread(target=open_daymark, daemon=True).start()
+                self.send_json(200, {"status": "ok", "checkin": checkin})
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"status": "error", "message": str(exc)})
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": str(exc)})
+            return
+
+        if api_path == "/api/portfolio/updates":
+            try:
+                payload = json.loads(body)
+                update = portfolio_store.create_update(
+                    payload.get("original_input"),
+                    payload.get("category", "other"),
+                    payload.get("supporting_links", []),
+                )
+                start_portfolio_proposal(update["id"])
+                self.send_json(201, {"status": "ok", "update": update})
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"status": "error", "message": str(exc)})
+            except Exception as exc:
+                self.send_json(500, {"status": "error", "message": str(exc)})
+            return
+
+        if api_path.startswith("/api/portfolio/updates/"):
+            parts = api_path.strip("/").split("/")
+            if len(parts) != 5:
+                self.send_json(404, {"status": "error", "message": "Unknown portfolio update action"})
+                return
+            update_id, action = parts[3], parts[4]
+            update = portfolio_store.get_update(update_id)
+            if not update:
+                self.send_json(404, {"status": "error", "message": "Portfolio update not found"})
+                return
+            try:
+                payload = json.loads(body or "{}")
+                if action == "refine":
+                    instruction = str(payload.get("instruction", "")).strip()
+                    if not instruction or len(instruction) > 3000:
+                        raise ValueError("Describe the refinement in 1–3,000 characters")
+                    if update["status"] not in {"ready_for_review", "awaiting_clarification", "failed"}:
+                        raise ValueError("This update is no longer open for refinement")
+                    if not start_portfolio_proposal(update_id, instruction):
+                        raise ValueError("This update is already being processed")
+                    self.send_json(202, {"status": "ok", "message": "Refinement saved for processing"})
+                    return
+                if action == "approve":
+                    if update["status"] != "ready_for_review" or not update.get("preview_url"):
+                        raise ValueError("A successful preview is required before approval")
+                    portfolio_store.update_workflow_state(update_id, "approved")
+                    start_portfolio_publish(update_id)
+                    self.send_json(202, {"status": "ok", "message": "Approval recorded; merge and production deployment are being verified"})
+                    return
+                if action == "discard":
+                    if update["status"] in {"approved", "publishing", "published"}:
+                        raise ValueError("This update is already being published or has been published")
+                    if update.get("branch_name"):
+                        import portfolio_github
+                        portfolio_github.GitHubClient().discard_review(update)
+                    else:
+                        portfolio_store.update_workflow_state(
+                            update_id, "discarded", event_type="update_discarded", metadata={"branch_deleted": False},
+                        )
+                    self.send_json(200, {"status": "ok", "message": "Update discarded"})
+                    return
+                self.send_json(404, {"status": "error", "message": "Unknown portfolio update action"})
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"status": "error", "message": str(exc)})
+            except Exception as exc:
+                self.send_json(502, {"status": "error", "message": str(exc)})
+            return
+
+        if self.path == "/api/routines":
+            try:
+                payload = json.loads(body)
+                routines = payload.get("routines", [])
+                daily_alarm = payload.get("daily_alarm", DEFAULT_ROUTINES_CONFIG["daily_alarm"])
+                weekdays = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+                if not isinstance(routines, list) or not isinstance(daily_alarm, dict):
+                    raise ValueError("Expected a routine list and daily alarm settings")
+                alarm_time = str(daily_alarm.get("time", "08:30"))
+                if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", alarm_time):
+                    raise ValueError("Daily alarm time must be HH:MM")
+                cleaned = []
+                for routine in routines:
+                    if not isinstance(routine, dict) or not routine.get("id") or not routine.get("title"):
+                        raise ValueError("Each routine needs an id and title")
+                    days = routine.get("days", [])
+                    routine_time = str(routine.get("time", ""))
+                    if not isinstance(days, list) or not days or any(day not in weekdays for day in days):
+                        raise ValueError("Each routine needs one or more valid weekdays")
+                    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", routine_time):
+                        raise ValueError("Routine time must be HH:MM")
+                    item = dict(routine)
+                    item["days"] = list(dict.fromkeys(days))
+                    item["time"] = routine_time
+                    item["duration"] = max(1, min(1440, int(routine.get("duration", 60))))
+                    for date_field in ("start_date", "end_date"):
+                        value = routine.get(date_field)
+                        if value:
+                            if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                                raise ValueError(f"Routine {date_field} must be YYYY-MM-DD")
+                            try:
+                                datetime.date.fromisoformat(value)
+                            except ValueError:
+                                raise ValueError(f"Routine {date_field} must be a valid date")
+                            item[date_field] = value
+                        else:
+                            item.pop(date_field, None)
+                    if item.get("start_date") and item.get("end_date") and item["start_date"] > item["end_date"]:
+                        raise ValueError("Routine start_date must be on or before end_date")
+                    item["completed_dates"] = [d for d in routine.get("completed_dates", [])
+                                                if isinstance(d, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d)]
+                    cleaned.append(item)
+                config = {
+                    "daily_alarm": {"enabled": bool(daily_alarm.get("enabled", True)), "time": alarm_time},
+                    "routines": cleaned
+                }
+                with TASKS_LOCK:
+                    save_routines_config(config)
+                response_bytes = json.dumps({"status": "ok", **config}).encode("utf-8")
+            except Exception as e:
+                response_bytes = json.dumps({"status": "error", "message": str(e)}).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(response_bytes)))
+                self.end_headers()
+                self.wfile.write(response_bytes)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+            return
+
         if self.path == "/api/scheduled-action":
             try:
                 payload = json.loads(body)
@@ -817,6 +1374,16 @@ class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
                 event = payload.get("event")
                 if not isinstance(task, dict) or not task.get("id") or not task.get("title"):
                     raise ValueError("A task with id and title is required")
+                # Some model responses include an ISO datetime where the app
+                # expects a date. Keep the date portion so reminders match the
+                # daemon's YYYY-MM-DD local-day comparison.
+                raw_date = str(task.get("date") or datetime.date.today().isoformat()).strip()
+                try:
+                    task["date"] = datetime.date.fromisoformat(raw_date[:10]).isoformat()
+                except ValueError:
+                    task["date"] = datetime.date.today().isoformat()
+                if isinstance(event, dict):
+                    event["date"] = task["date"]
                 with TASKS_LOCK:
                     tasks = load_shared_tasks()
                     tasks = [item for item in tasks if item.get("id") != task["id"]]
@@ -827,6 +1394,7 @@ class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
                         events = [item for item in events if item.get("id") != event["id"]]
                         events.append(event)
                         save_shared_events(events)
+                audit_shared_change("scheduled-action", "upsert", [task["id"]], len(tasks))
                 response_bytes = json.dumps({"status": "ok", "task": task, "event": event}).encode("utf-8")
             except Exception as e:
                 response_bytes = json.dumps({"status": "error", "message": str(e)}).encode("utf-8")
@@ -867,6 +1435,7 @@ class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
                         tasks = list(by_id.values())
                         result_task = incoming[-1] if incoming else None
                     save_shared_tasks(tasks)
+                audit_shared_change("tasks", operation, [task.get("id") for task in incoming] if operation != "delete" else [payload.get("id")], len(tasks))
                 response_bytes = json.dumps({"status": "ok", "task": result_task, "tasks": tasks}).encode("utf-8")
             except Exception as e:
                 response_bytes = json.dumps({"status": "error", "message": str(e)}).encode("utf-8")
@@ -907,6 +1476,7 @@ class DaymarkHandler(http.server.SimpleHTTPRequestHandler):
                         events = list(by_id.values())
                         result_event = incoming[-1] if incoming else None
                     save_shared_events(events)
+                audit_shared_change("events", operation, [event.get("id") for event in incoming] if operation != "delete" else [payload.get("id")], len(events))
                 response_bytes = json.dumps({"status": "ok", "event": result_event, "events": events}).encode("utf-8")
             except Exception as e:
                 response_bytes = json.dumps({"status": "error", "message": str(e)}).encode("utf-8")
@@ -1037,6 +1607,7 @@ if __name__ == "__main__":
     # causing some clients to hit old code or empty handlers.
     socketserver.TCPServer.allow_reuse_address = False
     with socketserver.TCPServer(("", port), DaymarkHandler) as httpd:
+        start_portfolio_workflow_recovery()
         print(f"Daymark Assistant Server running at http://localhost:{port}")
         try:
             httpd.serve_forever()

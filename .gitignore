@@ -2,6 +2,8 @@
 ai_config.json
 calendar_config.json
 telegram_config.json
+telegram_chats.json
+telegram_reminder_state.json
 planner_config.json
 prompt.md
 
@@ -9,6 +11,8 @@ prompt.md
 calendar_cache.json
 daymark_tasks.json
 daymark_events.json
+daymark_routines.json
+portfolio_updates.sqlite3
 *.log
 *.lock
 _loading.html

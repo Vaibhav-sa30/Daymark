@@ -24,6 +24,7 @@ const defaults = {
   projects: [],
   tasks: [],
   meetings: [],
+  routines: [],
   ideas: [],
   executionLog: [],
   context: '',
@@ -226,6 +227,72 @@ function deleteSharedEvent(id) {
 const dateKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const dateLabel = (d, options) => new Intl.DateTimeFormat(undefined, options).format(d);
 const today = new Date();
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+function routineOccurrencesForDate(date = new Date()) {
+  const day = WEEKDAYS[date.getDay()];
+  const dateStr = dateKey(date);
+  return (data.routines || []).filter(routine =>
+    (routine.days || []).includes(day) &&
+    (!routine.start_date || dateStr >= routine.start_date) &&
+    (!routine.end_date || dateStr <= routine.end_date)
+  ).map(routine => ({
+    ...routine,
+    ...(routine.daily_plan && routine.daily_plan[dateStr] ? routine.daily_plan[dateStr] : {}),
+    id: `routine-${routine.id}-${dateStr}`,
+    routineId: routine.id,
+    date: dateStr,
+    source: 'routine',
+    done: (routine.completed_dates || []).includes(dateStr),
+    note: 'Recurring Daymark fundamental'
+  }));
+}
+
+async function saveRoutineConfig() {
+  try {
+    const response = await fetch('/api/routines', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ routines: data.routines || [], daily_alarm: data.reminder })
+    });
+    const result = await response.json();
+    if (!response.ok || result.status !== 'ok') throw new Error(result.message || `HTTP ${response.status}`);
+    data.routines = result.routines;
+    data.reminder = result.daily_alarm;
+    localStorage.setItem(KEY, JSON.stringify(data));
+    return true;
+  } catch (error) {
+    console.error('Daymark routine save failed:', error);
+    toast('Could not save recurring routines. They are still visible here; I’ll retry when you change them.');
+    return false;
+  }
+}
+
+async function syncRoutines() {
+  try {
+    const response = await fetch('/api/routines', { cache: 'no-store' });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (!Array.isArray(result.routines)) return;
+    data.routines = result.routines;
+    if (result.daily_alarm) data.reminder = result.daily_alarm;
+    localStorage.setItem(KEY, JSON.stringify(data));
+    render();
+    scheduleMeetingReminders();
+  } catch (error) {
+    console.warn('Daymark recurring schedule is unavailable:', error);
+  }
+}
+
+function setRoutineDone(routineId, dateStr, done) {
+  const routine = (data.routines || []).find(item => item.id === routineId);
+  if (!routine) return;
+  const completed = new Set(routine.completed_dates || []);
+  if (done) completed.add(dateStr);
+  else completed.delete(dateStr);
+  routine.completed_dates = [...completed].sort();
+  render();
+  saveRoutineConfig();
+}
 
 function escapeHTML(s) {
   return String(s || '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -505,6 +572,7 @@ function calculateCalendarBudget() {
   const workdayMinutes = 8.5 * 60;
   
   // Total meeting minutes
+  const todayRoutines = routineOccurrencesForDate();
   const meetingMinutes = data.meetings.reduce((sum, m) => sum + (m.duration || 45), 0);
   
   // Buffer time (transition between meetings & focus)
@@ -514,7 +582,7 @@ function calculateCalendarBudget() {
   const availableFocusMinutes = Math.max(0, workdayMinutes - meetingMinutes - bufferMinutes);
   
   // Planned task time for today's incomplete tasks
-  const plannedTaskMinutes = data.tasks.filter(t => !t.done).reduce((sum, t) => sum + (t.duration || 30), 0);
+  const plannedTaskMinutes = [...data.tasks, ...todayRoutines].filter(t => !t.done).reduce((sum, t) => sum + (t.duration || 30), 0);
 
   return {
     meetingHours: (meetingMinutes / 60).toFixed(1),
@@ -592,14 +660,15 @@ function openDailyBriefModal(isAlarm = false) {
 
   // Populate Tasks
   const taskList = $('briefTaskList');
-  const openTasks = data.tasks.filter(t => !t.done);
+  const briefTasks = [...data.tasks, ...routineOccurrencesForDate()];
+  const openTasks = briefTasks.filter(t => !t.done);
   $('briefTaskCount').textContent = openTasks.length;
-  if (!data.tasks.length) {
+  if (!briefTasks.length) {
     taskList.innerHTML = '<div class="empty-state">No tasks scheduled yet for today.</div>';
   } else {
-    taskList.innerHTML = sorted(data.tasks).map(item => `
+    taskList.innerHTML = sorted(briefTasks).map(item => `
       <div class="brief-row">
-        <button class="check-box ${item.done ? 'done' : ''}" data-brief-action="toggle" data-id="${escapeHTML(item.id)}">${item.done ? '✓' : ''}</button>
+        <button class="check-box ${item.done ? 'done' : ''}" data-brief-action="toggle" data-id="${escapeHTML(item.id)}" ${item.routineId ? `data-routine-id="${escapeHTML(item.routineId)}" data-routine-date="${escapeHTML(item.date)}"` : ''}>${item.done ? '✓' : ''}</button>
         <span class="${item.done ? 'completed' : ''}" style="flex:1">${escapeHTML(item.title)}</span>
         <span class="task-duration-pill">${item.duration || 30}m</span>
       </div>
@@ -608,7 +677,10 @@ function openDailyBriefModal(isAlarm = false) {
 
   // Populate Meetings
   const meetingList = $('briefMeetingList');
-  const todaysMeetings = (data.meetings || []).filter(m => !m.date || m.date === dateKey(new Date()));
+  const todaysMeetings = [
+    ...(data.meetings || []).filter(m => !m.date || m.date === dateKey(new Date())),
+    ...routineOccurrencesForDate()
+  ];
   $('briefMeetingCount').textContent = todaysMeetings.length;
   if (!todaysMeetings.length) {
     meetingList.innerHTML = '<div class="empty-state">No calendar commitments scheduled for today.</div>';
@@ -636,6 +708,12 @@ function openDailyBriefModal(isAlarm = false) {
 
   taskList.querySelectorAll('[data-brief-action="toggle"]').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (btn.dataset.routineId) {
+        const occurrence = routineOccurrencesForDate().find(item => item.routineId === btn.dataset.routineId);
+        setRoutineDone(btn.dataset.routineId, btn.dataset.routineDate, !occurrence?.done);
+        openDailyBriefModal(isAlarm);
+        return;
+      }
       const item = data.tasks.find(x => x.id === btn.dataset.id);
       if (item) item.done = !item.done;
       save();
@@ -915,9 +993,10 @@ function render() {
   }
 
   // Render Tiers
-  renderTaskTier('mustTaskList', data.tasks.filter(t => t.tier === 'must'), 'must');
-  renderTaskTier('shouldTaskList', data.tasks.filter(t => t.tier === 'should'), 'should');
-  renderTaskTier('optionalTaskList', data.tasks.filter(t => t.tier === 'optional'), 'optional');
+  const todayRoutines = routineOccurrencesForDate();
+  renderTaskTier('mustTaskList', [...data.tasks.filter(t => t.tier === 'must'), ...todayRoutines.filter(t => t.tier === 'must')], 'must');
+  renderTaskTier('shouldTaskList', [...data.tasks.filter(t => t.tier === 'should'), ...todayRoutines.filter(t => t.tier === 'should')], 'should');
+  renderTaskTier('optionalTaskList', [...data.tasks.filter(t => t.tier === 'optional'), ...todayRoutines.filter(t => t.tier === 'optional')], 'optional');
 
   // Render Meetings
   renderMeetings();
@@ -946,15 +1025,15 @@ function renderTaskTier(elementId, items, tier) {
     const proj = data.projects.find(p => p.id === item.project_id);
     return `
       <div class="day-item">
-        <button class="check-box ${item.done ? 'done' : ''}" data-task-action="toggle" data-id="${escapeHTML(item.id)}" aria-label="Toggle task">${item.done ? '✓' : ''}</button>
+        <button class="check-box ${item.done ? 'done' : ''}" data-task-action="toggle" data-id="${escapeHTML(item.id)}" ${item.routineId ? `data-routine-id="${escapeHTML(item.routineId)}" data-routine-date="${escapeHTML(item.date)}"` : ''} aria-label="Toggle task">${item.done ? '✓' : ''}</button>
         <div class="item-copy">
           <div class="item-title ${item.done ? 'completed' : ''}">${escapeHTML(item.title)}</div>
           ${(item.time || item.note) ? `<div class="item-note">${item.time ? `${escapeHTML(formatTime(item.time))}${item.note ? ' · ' : ''}` : ''}${item.note ? escapeHTML(item.note) : ''}</div>` : ''}
         </div>
         ${proj ? `<span class="task-tag-pill">${escapeHTML(proj.name.slice(0, 16))}</span>` : ''}
         <span class="task-duration-pill">${item.duration || 30}m</span>
-        ${!item.done ? `<button class="task-start-mini-btn" data-task-action="start" data-id="${escapeHTML(item.id)}" title="Start focus session">⚡ START</button>` : ''}
-        <button class="item-delete" data-task-action="delete" data-id="${escapeHTML(item.id)}" title="Delete item">×</button>
+        ${!item.done ? `<button class="task-start-mini-btn" data-task-action="start" data-id="${escapeHTML(item.id)}" ${item.routineId ? `data-routine-id="${escapeHTML(item.routineId)}"` : ''} title="Start focus session">⚡ START</button>` : ''}
+        ${!item.routineId ? `<button class="item-delete" data-task-action="delete" data-id="${escapeHTML(item.id)}" title="Delete item">×</button>` : '<span class="task-tag-pill">REPEATS</span>'}
       </div>
     `;
   }).join('');
@@ -965,10 +1044,16 @@ function renderTaskTier(elementId, items, tier) {
       e.stopPropagation();
       const id = btn.dataset.id;
       const action = btn.dataset.taskAction;
-      const task = data.tasks.find(t => t.id === id);
+      const task = btn.dataset.routineId
+        ? routineOccurrencesForDate().find(item => item.routineId === btn.dataset.routineId)
+        : data.tasks.find(t => t.id === id);
       if (!task) return;
 
       if (action === 'toggle') {
+        if (task.routineId) {
+          setRoutineDone(task.routineId, task.date, !task.done);
+          return;
+        }
         task.done = !task.done;
         if (task.done) {
           playAlarmSequence();
@@ -994,7 +1079,10 @@ function renderTaskTier(elementId, items, tier) {
 function renderMeetings() {
   const list = $('meetingList');
   const fullList = $('calendarFullMeetingList');
-  const todayMeetings = (data.meetings || []).filter(m => !m.date || m.date === dateKey(new Date()));
+  const todayMeetings = [
+    ...(data.meetings || []).filter(m => !m.date || m.date === dateKey(new Date())),
+    ...routineOccurrencesForDate().map(routine => ({ ...routine, note: 'Recurring Daymark fundamental' }))
+  ];
   if (!todayMeetings.length) {
     const empty = '<div class="empty-state">No calendar constraints. The day is yours.</div>';
     if (list) list.innerHTML = empty;
@@ -1010,7 +1098,7 @@ function renderMeetings() {
         ${m.note ? `<div class="item-note">${escapeHTML(m.note)}</div>` : ''}
       </div>
       <span class="item-time">${escapeHTML(formatTime(m.time))} (${m.duration || 45}m)</span>
-      <button class="item-delete" data-meeting-delete="${escapeHTML(m.id)}">×</button>
+      ${m.source === 'routine' ? '<span class="task-tag-pill">REPEATS</span>' : `<button class="item-delete" data-meeting-delete="${escapeHTML(m.id)}">×</button>`}
     </div>
   `).join('');
 
@@ -1268,10 +1356,12 @@ function showView(view) {
     ideas: 'Idea Parking Lot',
     calendar: 'Calendar & Time',
     review: 'Reviews & Execution Log',
-    context: 'Workspace Scanner'
+    context: 'Workspace Scanner',
+    portfolio: 'Portfolio Updates'
   };
   $('breadcrumbView').textContent = titles[view] || 'Today';
   if (view === 'context') $('contextInput').value = data.context || '';
+  if (view === 'portfolio' && window.PortfolioUpdates) window.PortfolioUpdates.refresh();
 }
 
 /* =========================================================
@@ -2127,6 +2217,10 @@ function buildLLMContext() {
     daymark_events: (data.meetings || []).filter(event => event.source !== 'google'),
     projects: data.projects || [],
     tasks: data.tasks || [],
+    today_routines: routineOccurrencesForDate().map(routine => ({
+      title: routine.title, time: routine.time, duration: routine.duration,
+      done: routine.done, tier: routine.tier
+    })),
     bigThree: data.bigThree || {},
     executionLog: (data.executionLog || []).slice(0, 5)
   };
@@ -2924,53 +3018,27 @@ $('saveContext').addEventListener('click', () => {
 
 // Settings & Reminder Prompt
 $('settingsBtn').addEventListener('click', async () => {
-  const time = prompt('Set daily check-in time (24-hour HH:MM), or type "off" to disable:', data.reminder.time);
+  const time = prompt('Set the daily agenda alarm time (24-hour HH:MM), or type "off" to disable:', data.reminder.time);
   if (time === null) return;
   if (time.trim().toLowerCase() === 'off') {
     data.reminder.enabled = false;
+    const saved = await saveRoutineConfig();
     save();
     render();
-    toast('Daily reminder alarm turned off.');
+    if (saved) toast('Daily agenda alarm turned off.');
     return;
   }
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time.trim())) {
     toast('Please enter a valid time like 08:30 or 09:00.');
     return;
   }
-  if ('Notification' in window && Notification.permission !== 'granted') {
-    await Notification.requestPermission();
-  }
   data.reminder.time = time.trim();
   data.reminder.enabled = true;
+  const saved = await saveRoutineConfig();
   save();
   render();
-  toast(`Daily alarm set for ${data.reminder.time}.`);
+  if (saved) toast(`Daily agenda alarm set for ${data.reminder.time}.`);
 });
-
-// Schedule Daily Morning Check
-function scheduleCheck() {
-  if (!data.reminder.enabled) return;
-  const now = new Date();
-  const [h, m] = data.reminder.time.split(':').map(Number);
-  const target = new Date(now);
-  target.setHours(h, m, 0, 0);
-  if (target <= now) target.setDate(target.getDate() + 1);
-
-  const delay = target - now;
-  setTimeout(() => {
-    const todayKey = dateKey(new Date());
-    if (data.lastBriefDate !== todayKey) {
-      openDailyBriefModal(true);
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Daymark Morning Brief', {
-          body: `Primary outcome: ${data.bigThree.primary}. Click to open your morning brief.`,
-          tag: 'daymark-daily'
-        });
-      }
-    }
-    scheduleCheck();
-  }, delay);
-}
 
 // Initial Boot: Render and fetch live Google Calendar
 render();
@@ -2978,7 +3046,8 @@ syncSharedTasks();
 setInterval(syncSharedTasks, 5000);
 syncSharedEvents();
 setInterval(syncSharedEvents, 5000);
-scheduleCheck();
+syncRoutines();
+setInterval(syncRoutines, 30000);
 fetchGoogleCalendar().then(() => {
   scheduleMeetingReminders();
 });
